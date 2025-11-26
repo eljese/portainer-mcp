@@ -35,7 +35,8 @@ export class PortainerClient {
     method: string,
     path: string,
     body?: unknown,
-    timeout = 30000
+    timeout = 30000,
+    raw = false
   ): Promise<T> {
     const url = `${this.baseUrl}/api${path}`;
     const controller = new AbortController();
@@ -82,6 +83,7 @@ export class PortainerClient {
 
       const text = await response.text();
       if (!text) return {} as T;
+      if (raw) return text as T;
       return JSON.parse(text) as T;
     } catch (error) {
       clearTimeout(timeoutId);
@@ -146,7 +148,8 @@ export class PortainerClient {
       "GET",
       `/endpoints/${envId}/docker/containers/${containerId}/logs?stdout=true&stderr=true&tail=${clampedTail}`,
       undefined,
-      60000
+      60000,
+      true
     );
   }
 
