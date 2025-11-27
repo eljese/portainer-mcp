@@ -1,29 +1,24 @@
-FROM node:22-alpine AS builder
+FROM oven/bun:1-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json pnpm-lock.yaml ./
-
-# Install pnpm and dependencies
-RUN corepack enable pnpm && pnpm install --frozen-lockfile
-
-# Copy source and build
-COPY tsconfig.json ./
+# Copy source files
+COPY package.json bun.lockb* ./
 COPY src ./src
-RUN pnpm build
+COPY tsconfig.json ./
 
-# Production image
-FROM node:22-alpine
+# Install deps and compile to standalone binary
+RUN bun install --frozen-lockfile || bun install
+RUN bun build src/index.ts --compile --outfile=portainer-mcp
+
+# Minimal runtime - just the binary
+FROM alpine:3.21
+
+# Add CA certificates for HTTPS and required libs for Bun binary
+RUN apk add --no-cache ca-certificates libstdc++ libgcc
 
 WORKDIR /app
-
-# Copy package files and install production deps only
-COPY package.json pnpm-lock.yaml ./
-RUN corepack enable pnpm && pnpm install --frozen-lockfile --prod
-
-# Copy built files
-COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/portainer-mcp ./portainer-mcp
 
 # MCP servers communicate via stdio
-ENTRYPOINT ["node", "dist/index.js"]
+ENTRYPOINT ["./portainer-mcp"]
