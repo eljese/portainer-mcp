@@ -1,17 +1,24 @@
 # Portainer MCP Server
 
-An MCP (Model Context Protocol) server that provides tools to interact with Portainer for Docker container management.
+An MCP (Model Context Protocol) server that enables AI assistants like Claude to manage Docker containers through Portainer's API.
 
-## Features
+> **Fair Warning:** This project has been thoroughly *vibe coded*. What does that mean? It means I built this for my own personal use and experimentation, guided primarily by vibes and AI-assisted development. Use at your own risk. Feel free to submit issues, but be aware they will be *vibe fixed* as well. No guarantees, no SLAs, just vibes.
 
-- **Environments**: List and inspect Portainer environments
-- **Containers**: List, inspect, logs, start/stop/restart/kill/remove
-- **Stacks**: List, inspect, create, start/stop/remove
-- **Images**: List, pull, remove
-- **Volumes**: List, create, remove
-- **Networks**: List, create, remove
+## What is this?
 
-## Quick Start (Docker)
+This MCP server acts as a bridge between AI models and your Portainer instance. Once connected, your AI assistant can:
+
+- List and inspect your Docker environments, containers, stacks, images, volumes, and networks
+- View container logs
+- Perform actions like starting, stopping, and removing containers
+- Deploy new Docker Compose stacks
+- Manage Docker resources (images, volumes, networks)
+
+All write operations are disabled by default and must be explicitly enabled.
+
+## Quick Start
+
+### Docker (Recommended)
 
 ```bash
 # Build the image
@@ -24,26 +31,44 @@ docker run --rm \
   portainer-mcp
 ```
 
+### Node.js
+
+```bash
+# Install dependencies
+pnpm install
+
+# Build
+pnpm build
+
+# Run
+PORTAINER_URL=https://portainer.example.com \
+PORTAINER_API_KEY=ptr_your_key_here \
+node dist/index.js
+```
+
 ## Configuration
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `PORTAINER_URL` | Yes | Portainer instance URL (e.g., `https://portainer.example.com`) |
-| `PORTAINER_API_KEY` | Yes | Portainer API key |
-| `PORTAINER_WRITE_ENABLED` | No | Set to `true` to enable write operations (default: `false`) |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PORTAINER_URL` | Yes | - | Your Portainer instance URL |
+| `PORTAINER_API_KEY` | Yes | - | Portainer API access token |
+| `PORTAINER_WRITE_ENABLED` | No | `false` | Set to `true` to enable write operations |
 
 ### Getting a Portainer API Key
 
 1. Log into Portainer
 2. Go to **My Account** → **Access Tokens**
 3. Click **Add access token**
-4. Copy the generated token
+4. Give it a descriptive name and copy the generated token
 
-## Usage with Claude Desktop
+## Claude Desktop Integration
 
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+Add to your Claude Desktop config:
 
-### Docker (Recommended)
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+### Using Docker
 
 ```json
 {
@@ -62,7 +87,7 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 }
 ```
 
-### Node.js (Alternative)
+### Using Node.js
 
 ```json
 {
@@ -86,15 +111,15 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 
 | Tool | Description |
 |------|-------------|
-| `list_environments` | List all Portainer environments |
-| `list_containers` | List containers in an environment |
-| `inspect_container` | Get container details |
-| `container_logs` | Get container logs |
-| `list_stacks` | List all stacks |
-| `inspect_stack` | Get stack details + compose file |
-| `list_images` | List images |
-| `list_volumes` | List volumes |
-| `list_networks` | List networks |
+| `list_environments` | List all Portainer environments (Docker endpoints) |
+| `list_containers` | List containers in an environment (optionally include stopped) |
+| `inspect_container` | Get detailed information about a container |
+| `container_logs` | Get container logs (default 100 lines, max 10,000) |
+| `list_stacks` | List all stacks (optionally filter by environment) |
+| `inspect_stack` | Get stack details including the compose file content |
+| `list_images` | List Docker images in an environment |
+| `list_volumes` | List Docker volumes in an environment |
+| `list_networks` | List Docker networks in an environment |
 
 ### Write Operations (Require `PORTAINER_WRITE_ENABLED=true`)
 
@@ -103,26 +128,48 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 | `container_action` | Start, stop, restart, kill, or remove a container |
 | `stack_action` | Start, stop, or remove a stack |
 | `create_stack` | Create a new Docker Compose stack |
-| `manage_image` | Pull or remove an image |
-| `manage_volume` | Create or remove a volume |
-| `manage_network` | Create or remove a network |
+| `manage_image` | Pull or remove a Docker image |
+| `manage_volume` | Create or remove a Docker volume |
+| `manage_network` | Create or remove a Docker network (with optional custom subnet) |
 
 ## Example Workflows
 
 ### Check what's running
 
-1. `list_environments` → Get environment IDs
-2. `list_containers(environment_id=1)` → See containers
-3. `container_logs(environment_id=1, container_id="abc123")` → View logs
+```
+You: What containers are running in my environment?
 
-### Deploy a stack
+Claude: Let me check...
+→ list_environments
+→ list_containers(environment_id=1)
+
+You have 5 containers running:
+- nginx (Up 2 days)
+- postgres (Up 2 days)
+- redis (Up 5 hours)
+...
+```
+
+### View logs for a problematic container
 
 ```
-create_stack(
-  environment_id=1,
-  name="my-app",
-  compose_content="version: '3'\nservices:\n  web:\n    image: nginx"
-)
+You: Show me the last 50 lines of logs from the api container
+
+Claude:
+→ container_logs(environment_id=1, container_id="api", tail=50)
+```
+
+### Deploy a new stack
+
+```
+You: Deploy an nginx container as a stack called "webserver"
+
+Claude:
+→ create_stack(
+    environment_id=1,
+    name="webserver",
+    compose_content="services:\n  web:\n    image: nginx:latest\n    ports:\n      - '8080:80'"
+  )
 ```
 
 ## Development
@@ -131,14 +178,17 @@ create_stack(
 # Install dependencies
 pnpm install
 
-# Build
+# Build TypeScript
 pnpm build
+
+# Watch mode (rebuild on changes)
+pnpm dev
 
 # Run tests
 pnpm test
 
-# Watch mode
-pnpm dev
+# Bundle for distribution
+pnpm bundle
 
 # Build Docker image
 docker build -t portainer-mcp .
@@ -148,14 +198,14 @@ docker build -t portainer-mcp .
 
 ```
 src/
-├── types.ts           # Type definitions
-├── client.ts          # Portainer API client
-├── schemas.ts         # Zod validation schemas
 ├── index.ts           # MCP server entry point
+├── client.ts          # Portainer API client
+├── types.ts           # TypeScript type definitions
+├── schemas.ts         # Zod validation schemas
 └── tools/
-    ├── definitions.ts # Tool JSON Schema definitions
-    ├── index.ts       # Tool registry and dispatch
-    ├── utils.ts       # Response formatting
+    ├── index.ts       # Tool registry and dispatcher
+    ├── definitions.ts # MCP tool JSON Schema definitions
+    ├── utils.ts       # Response formatting utilities
     ├── environments.ts
     ├── containers.ts
     ├── stacks.ts
@@ -163,6 +213,14 @@ src/
     ├── volumes.ts
     └── networks.ts
 ```
+
+## Tech Stack
+
+- **TypeScript** - Type safety throughout
+- **@modelcontextprotocol/sdk** - MCP protocol implementation
+- **Zod** - Runtime validation of tool arguments
+- **Node.js 18+** - Runtime requirement
+- **Docker** - Optimized multi-stage build (~148MB image)
 
 ## License
 
