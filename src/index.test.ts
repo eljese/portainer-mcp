@@ -118,6 +118,63 @@ function createMockClient(overrides: Partial<PortainerClient> = {}) {
     ]),
     createNetwork: mock.fn(async () => ({ Id: "newnet123" })),
     removeNetwork: mock.fn(async () => {}),
+    getContainerStats: mock.fn(async () => ({
+      read: "2024-01-01T00:00:00Z",
+      cpu_stats: {
+        cpu_usage: { total_usage: 200000000 },
+        system_cpu_usage: 10000000000,
+        online_cpus: 4,
+      },
+      precpu_stats: {
+        cpu_usage: { total_usage: 100000000 },
+        system_cpu_usage: 9000000000,
+      },
+      memory_stats: { usage: 104857600, limit: 2147483648 },
+      networks: { eth0: { rx_bytes: 1048576, tx_bytes: 524288 } },
+    })),
+    updateStack: mock.fn(async () => ({
+      Id: 1,
+      Name: "updatedstack",
+      Type: 1,
+      EndpointId: 1,
+      Status: 1,
+      CreationDate: 0,
+      UpdateDate: 0,
+    })),
+    redeployStack: mock.fn(async () => {}),
+    getStackByName: mock.fn(async (name: string) => ({
+      Id: 1,
+      Name: name,
+      Type: 1,
+      EndpointId: 1,
+      Status: 1,
+      CreationDate: 0,
+      UpdateDate: 0,
+      Env: [{ name: "FOO", value: "bar" }],
+    })),
+    getDashboard: mock.fn(async () => ({
+      containers: { running: 5, stopped: 2, healthy: 4, unhealthy: 1, total: 7 },
+      images: { total: 15, size: 5368709120 },
+      volumes: 8,
+      networks: 3,
+      stacks: 4,
+      services: 0,
+    })),
+    getSystemInfo: mock.fn(async () => ({
+      platform: "Docker Standalone",
+      agents: 2,
+      edgeAgents: 1,
+    })),
+    getSystemVersion: mock.fn(async () => ({
+      ServerVersion: "2.19.0",
+      ServerEdition: "CE",
+      LatestVersion: "2.20.0",
+      UpdateAvailable: true,
+    })),
+    getRegistries: mock.fn(async () => [
+      { Id: 1, Name: "Docker Hub", URL: "docker.io", Type: 6, Authentication: true },
+      { Id: 2, Name: "GitHub", URL: "ghcr.io", Type: 8, Authentication: true },
+    ]),
     ...overrides,
   } as unknown as PortainerClient;
 }
@@ -188,6 +245,30 @@ const ManageNetworkSchema = z.object({
   action: z.enum(["create", "remove"]),
   name: z.string(),
   subnet: z.string().optional(),
+});
+
+const ContainerStatsSchema = z.object({
+  environment_id: z.number(),
+  container_id: z.string(),
+});
+
+const UpdateStackSchema = z.object({
+  stack_id: z.number(),
+  environment_id: z.number(),
+  compose_content: z.string().optional(),
+  env: z.array(z.object({ name: z.string(), value: z.string() })).optional(),
+  prune: z.boolean().optional(),
+  pull_image: z.boolean().optional(),
+});
+
+const RedeployStackSchema = z.object({
+  stack_id: z.number(),
+  environment_id: z.number(),
+  pull_image: z.boolean().optional(),
+});
+
+const StackByNameSchema = z.object({
+  name: z.string(),
 });
 
 // Helper to format responses (same as in index.ts)
@@ -398,6 +479,93 @@ function createToolHandler(client: PortainerClient) {
           await client.removeNetwork(parsed.environment_id, parsed.name);
           return formatResponse({ success: true, message: `Network removed` });
         }
+      }
+
+      case "container_stats": {
+        const parsed = ContainerStatsSchema.parse(args);
+        const stats = await client.getContainerStats(parsed.environment_id, parsed.container_id);
+        const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - stats.precpu_stats.cpu_usage.total_usage;
+        const systemDelta = stats.cpu_stats.system_cpu_usage - stats.precpu_stats.system_cpu_usage;
+        const cpuPercent = systemDelta > 0 ? (cpuDelta / systemDelta) * stats.cpu_stats.online_cpus * 100 : 0;
+        const memoryUsage = stats.memory_stats.usage;
+        const memoryLimit = stats.memory_stats.limit;
+        const memoryPercent = memoryLimit > 0 ? (memoryUsage / memoryLimit) * 100 : 0;
+        return formatResponse({
+          cpu_percent: Math.round(cpuPercent * 100) / 100,
+          memory_usage_mb: Math.round(memoryUsage / 1024 / 1024 * 100) / 100,
+          memory_limit_mb: Math.round(memoryLimit / 1024 / 1024 * 100) / 100,
+          memory_percent: Math.round(memoryPercent * 100) / 100,
+        });
+      }
+
+      case "update_stack": {
+        const parsed = UpdateStackSchema.parse(args);
+        const stack = await client.updateStack(parsed.stack_id, parsed.environment_id, {
+          composeContent: parsed.compose_content,
+          env: parsed.env,
+          prune: parsed.prune,
+          pullImage: parsed.pull_image,
+        });
+        return formatResponse({ success: true, id: stack.Id, name: stack.Name });
+      }
+
+      case "redeploy_stack": {
+        const parsed = RedeployStackSchema.parse(args);
+        await client.redeployStack(parsed.stack_id, parsed.environment_id, parsed.pull_image ?? false);
+        return formatResponse({ success: true, message: "Stack redeployed" });
+      }
+
+      case "get_stack_by_name": {
+        const parsed = StackByNameSchema.parse(args);
+        const stack = await client.getStackByName(parsed.name);
+        return formatResponse({
+          id: stack.Id,
+          name: stack.Name,
+          status: stack.Status === 1 ? "active" : "inactive",
+          environment_id: stack.EndpointId,
+          env: stack.Env || [],
+        });
+      }
+
+      case "environment_dashboard": {
+        const parsed = EnvironmentIdSchema.parse(args);
+        const dashboard = await client.getDashboard(parsed.environment_id);
+        return formatResponse({
+          containers: dashboard.containers,
+          images: { total: dashboard.images.total, size_mb: Math.round(dashboard.images.size / 1024 / 1024) },
+          volumes: dashboard.volumes,
+          networks: dashboard.networks,
+          stacks: dashboard.stacks,
+        });
+      }
+
+      case "system_info": {
+        const [info, version] = await Promise.all([
+          client.getSystemInfo(),
+          client.getSystemVersion(),
+        ]);
+        return formatResponse({
+          version: version.ServerVersion,
+          edition: version.ServerEdition,
+          update_available: version.UpdateAvailable,
+          platform: info.platform,
+          agents: info.agents,
+        });
+      }
+
+      case "list_registries": {
+        const registries = await client.getRegistries();
+        const typeMap: Record<number, string> = { 6: "dockerhub", 8: "github" };
+        return formatResponse({
+          items: registries.map((r) => ({
+            id: r.Id,
+            name: r.Name,
+            url: r.URL,
+            type: typeMap[r.Type] || "unknown",
+            authentication: r.Authentication,
+          })),
+          count: registries.length,
+        });
       }
 
       default:
@@ -682,6 +850,100 @@ describe("MCP Server Tool Handlers", () => {
       const data = JSON.parse(result.content[0].text);
 
       assert.strictEqual(data.success, true);
+    });
+  });
+
+  describe("container_stats", () => {
+    it("should return CPU and memory stats", async () => {
+      const result = await handleTool("container_stats", {
+        environment_id: 1,
+        container_id: "abc123",
+      });
+      const data = JSON.parse(result.content[0].text);
+
+      assert.strictEqual(data.cpu_percent, 40);
+      assert.strictEqual(data.memory_usage_mb, 100);
+      assert.strictEqual(data.memory_limit_mb, 2048);
+      assert.ok(data.memory_percent > 0);
+    });
+  });
+
+  describe("update_stack", () => {
+    it("should update stack and return result", async () => {
+      const result = await handleTool("update_stack", {
+        stack_id: 1,
+        environment_id: 1,
+        compose_content: "version: '3'",
+      });
+      const data = JSON.parse(result.content[0].text);
+
+      assert.strictEqual(data.success, true);
+      assert.strictEqual(data.id, 1);
+    });
+  });
+
+  describe("redeploy_stack", () => {
+    it("should redeploy stack from git", async () => {
+      const result = await handleTool("redeploy_stack", {
+        stack_id: 1,
+        environment_id: 1,
+        pull_image: true,
+      });
+      const data = JSON.parse(result.content[0].text);
+
+      assert.strictEqual(data.success, true);
+      assert.ok(data.message.includes("redeployed"));
+    });
+  });
+
+  describe("get_stack_by_name", () => {
+    it("should return stack by name", async () => {
+      const result = await handleTool("get_stack_by_name", { name: "mystack" });
+      const data = JSON.parse(result.content[0].text);
+
+      assert.strictEqual(data.id, 1);
+      assert.strictEqual(data.name, "mystack");
+      assert.strictEqual(data.status, "active");
+      assert.ok(Array.isArray(data.env));
+    });
+  });
+
+  describe("environment_dashboard", () => {
+    it("should return dashboard summary", async () => {
+      const result = await handleTool("environment_dashboard", { environment_id: 1 });
+      const data = JSON.parse(result.content[0].text);
+
+      assert.strictEqual(data.containers.running, 5);
+      assert.strictEqual(data.containers.stopped, 2);
+      assert.strictEqual(data.images.total, 15);
+      assert.strictEqual(data.volumes, 8);
+      assert.strictEqual(data.networks, 3);
+      assert.strictEqual(data.stacks, 4);
+    });
+  });
+
+  describe("system_info", () => {
+    it("should return Portainer system info", async () => {
+      const result = await handleTool("system_info", {});
+      const data = JSON.parse(result.content[0].text);
+
+      assert.strictEqual(data.version, "2.19.0");
+      assert.strictEqual(data.edition, "CE");
+      assert.strictEqual(data.update_available, true);
+      assert.strictEqual(data.platform, "Docker Standalone");
+      assert.strictEqual(data.agents, 2);
+    });
+  });
+
+  describe("list_registries", () => {
+    it("should return configured registries", async () => {
+      const result = await handleTool("list_registries", {});
+      const data = JSON.parse(result.content[0].text);
+
+      assert.strictEqual(data.count, 2);
+      assert.strictEqual(data.items[0].name, "Docker Hub");
+      assert.strictEqual(data.items[0].type, "dockerhub");
+      assert.strictEqual(data.items[1].type, "github");
     });
   });
 
