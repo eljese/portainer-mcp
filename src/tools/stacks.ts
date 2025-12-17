@@ -8,7 +8,7 @@ import {
   RedeployStackSchema,
   StackByNameSchema,
 } from "../schemas.js";
-import { formatResponse, type ToolResponse } from "./utils.js";
+import { formatResponse, formatStackResponse, type ToolResponse } from "./utils.js";
 
 export async function listStacks(
   client: PortainerClient,
@@ -39,15 +39,17 @@ export async function inspectStack(
     client.getStack(parsed.stack_id),
     client.getStackFile(parsed.stack_id),
   ]);
-  return formatResponse({
-    id: stack.Id,
-    name: stack.Name,
-    status: stack.Status === 1 ? "active" : "inactive",
-    environment_id: stack.EndpointId,
-    env: stack.Env || [],
-    git_config: stack.GitConfig || null,
-    compose_content: stackFile.StackFileContent,
-  });
+  return formatStackResponse(
+    {
+      id: stack.Id,
+      name: stack.Name,
+      status: stack.Status === 1 ? "active" : "inactive",
+      environment_id: stack.EndpointId,
+      env: stack.Env || [],
+      git_config: stack.GitConfig || null,
+    },
+    stackFile.StackFileContent
+  );
 }
 
 export async function stackAction(
@@ -128,12 +130,16 @@ export async function getStackByName(
 ): Promise<ToolResponse> {
   const parsed = StackByNameSchema.parse(args);
   const stack = await client.getStackByName(parsed.name);
-  return formatResponse({
-    id: stack.Id,
-    name: stack.Name,
-    status: stack.Status === 1 ? "active" : "inactive",
-    environment_id: stack.EndpointId,
-    env: stack.Env || [],
-    git_config: stack.GitConfig || null,
-  });
+  const stackFile = await client.getStackFile(stack.Id);
+  return formatStackResponse(
+    {
+      id: stack.Id,
+      name: stack.Name,
+      status: stack.Status === 1 ? "active" : "inactive",
+      environment_id: stack.EndpointId,
+      env: stack.Env || [],
+      git_config: stack.GitConfig || null,
+    },
+    stackFile.StackFileContent
+  );
 }

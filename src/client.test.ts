@@ -10,12 +10,21 @@ function mockFetch(response: {
   status?: number;
   body?: unknown;
   text?: string;
+  binary?: Buffer;
 }) {
   return mock.fn(async () => ({
     ok: response.ok,
     status: response.status ?? (response.ok ? 200 : 500),
     text: async () =>
       response.text ?? (response.body ? JSON.stringify(response.body) : ""),
+    arrayBuffer: async () => {
+      // Create a proper ArrayBuffer copy (Buffer.buffer shares underlying memory)
+      const buf = response.binary ?? Buffer.from(response.text ?? "");
+      const ab = new ArrayBuffer(buf.length);
+      const view = new Uint8Array(ab);
+      for (let i = 0; i < buf.length; i++) view[i] = buf[i];
+      return ab;
+    },
   }));
 }
 
@@ -123,6 +132,7 @@ describe("PortainerClient", () => {
 
   describe("getContainerLogs", () => {
     it("should fetch container logs with default tail", async () => {
+      // TTY mode - text starts with regular ASCII (> 2), no headers
       globalThis.fetch = mockFetch({ ok: true, text: "log line 1\nlog line 2" });
 
       const result = await client.getContainerLogs(1, "abc123");
@@ -148,6 +158,28 @@ describe("PortainerClient", () => {
 
       const fetchMock = globalThis.fetch as ReturnType<typeof mock.fn>;
       assert.ok(fetchMock.mock.calls[0].arguments[0].includes("tail=1"));
+    });
+
+    it("should strip Docker multiplexed stream headers", async () => {
+      // Build a multiplexed stream: [type(1)][padding(3)][size(4 BE)][payload]
+      // Frame 1: stdout (type=1), "Hello\n" (6 bytes)
+      // Frame 2: stderr (type=2), "Error\n" (6 bytes)
+      const frame1 = Buffer.alloc(8 + 6);
+      frame1[0] = 1; // stdout
+      frame1.writeUInt32BE(6, 4); // size
+      frame1.write("Hello\n", 8);
+
+      const frame2 = Buffer.alloc(8 + 6);
+      frame2[0] = 2; // stderr
+      frame2.writeUInt32BE(6, 4); // size
+      frame2.write("Error\n", 8);
+
+      const binary = Buffer.concat([frame1, frame2]);
+      globalThis.fetch = mockFetch({ ok: true, binary });
+
+      const result = await client.getContainerLogs(1, "abc123");
+
+      assert.strictEqual(result, "Hello\nError\n");
     });
   });
 

@@ -149,57 +149,76 @@ export class PortainerClient {
     tail = 100
   ): Promise<string> {
     const clampedTail = Math.min(Math.max(tail, 1), 10000);
-    const rawLogs = await this.request<string>(
-      "GET",
-      `/endpoints/${envId}/docker/containers/${containerId}/logs?stdout=true&stderr=true&tail=${clampedTail}`,
-      undefined,
-      60000,
-      true
-    );
-    // Docker multiplexed stream format: 8-byte header + payload
-    // Header: [stream_type (1)][padding (3)][size (4 big-endian)]
-    // We need to strip these headers when TTY is disabled
-    return this.stripDockerLogHeaders(rawLogs);
+    const url = `${this.baseUrl}/api/endpoints/${envId}/docker/containers/${containerId}/logs?stdout=true&stderr=true&tail=${clampedTail}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { "X-API-Key": this.apiKey },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new PortainerClientError(
+          `Failed to get logs: ${response.status}`,
+          `HTTP_${response.status}`,
+          response.status
+        );
+      }
+
+      // Get raw bytes to properly handle Docker multiplexed stream
+      const arrayBuffer = await response.arrayBuffer();
+      return this.stripDockerLogHeaders(Buffer.from(arrayBuffer));
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error instanceof PortainerClientError) throw error;
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new PortainerClientError("Request timeout after 60000ms", "TIMEOUT");
+      }
+      throw new PortainerClientError(
+        `Cannot connect to Portainer: ${error}`,
+        "CONNECTION_ERROR"
+      );
+    }
   }
 
-  private stripDockerLogHeaders(rawLogs: string): string {
-    // Check if logs have Docker stream headers (start with \x01 or \x02)
-    if (!rawLogs || typeof rawLogs !== "string" || rawLogs.length === 0) {
-      return rawLogs || "";
+  private stripDockerLogHeaders(buffer: Buffer): string {
+    if (!buffer || buffer.length === 0) {
+      return "";
     }
 
-    const firstChar = rawLogs.charCodeAt(0);
+    const firstByte = buffer[0];
     // Stream types: 0=stdin, 1=stdout, 2=stderr
-    if (firstChar > 2) {
-      // No header present (TTY mode), return as-is
-      return rawLogs;
+    // If first byte is > 2, it's TTY mode (no headers)
+    if (firstByte > 2) {
+      return buffer.toString("utf8");
     }
 
     // Parse multiplexed stream
-    const lines: string[] = [];
+    const chunks: string[] = [];
     let offset = 0;
-    const buffer = Buffer.from(rawLogs, "binary");
 
-    while (offset < buffer.length) {
-      if (offset + 8 > buffer.length) break;
-
-      // Read header
-      // const streamType = buffer[offset]; // 1=stdout, 2=stderr
+    while (offset + 8 <= buffer.length) {
+      // Read header: [stream_type (1)][padding (3)][size (4 big-endian)]
       const size = buffer.readUInt32BE(offset + 4);
       offset += 8;
 
+      if (size === 0) continue;
       if (offset + size > buffer.length) {
         // Incomplete frame, take what we can
-        lines.push(buffer.slice(offset).toString("utf8"));
+        chunks.push(buffer.subarray(offset).toString("utf8"));
         break;
       }
 
-      const line = buffer.slice(offset, offset + size).toString("utf8");
-      lines.push(line);
+      chunks.push(buffer.subarray(offset, offset + size).toString("utf8"));
       offset += size;
     }
 
-    return lines.join("");
+    return chunks.join("");
   }
 
   async containerAction(
