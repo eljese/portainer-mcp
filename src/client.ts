@@ -292,6 +292,45 @@ export class PortainerClient {
     );
   }
 
+  async createStackFromGit(
+    envId: number,
+    name: string,
+    repositoryUrl: string,
+    composeFilePathInRepository: string,
+    repositoryReferenceName?: string,
+    repositoryAuthentication = false,
+    repositoryUsername?: string,
+    repositoryPassword?: string,
+    env?: Array<{ name: string; value: string }>
+  ): Promise<PortainerStack> {
+    this.checkWriteEnabled();
+    const body: Record<string, unknown> = {
+      name,
+      repositoryURL: repositoryUrl,
+      composeFile: composeFilePathInRepository,
+      repositoryAuthentication,
+    };
+
+    if (repositoryReferenceName) {
+      body.repositoryReferenceName = repositoryReferenceName;
+    }
+    if (repositoryUsername) {
+      body.repositoryUsername = repositoryUsername;
+    }
+    if (repositoryPassword) {
+      body.repositoryPassword = repositoryPassword;
+    }
+    if (env && env.length > 0) {
+      body.env = env;
+    }
+
+    return this.request<PortainerStack>(
+      "POST",
+      `/stacks/create/standalone/repository?endpointId=${envId}`,
+      body
+    );
+  }
+
   async updateStack(
     stackId: number,
     envId: number,
