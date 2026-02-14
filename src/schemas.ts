@@ -46,6 +46,20 @@ export const CreateStackSchema = z.object({
   })).optional().describe("Environment variables for the stack"),
 });
 
+export const CreateStackFromGitSchema = z.object({
+  environment_id: z.number().describe("Portainer environment ID"),
+  name: z.string().describe("Stack name"),
+  repository_url: z.string().describe("Git repository URL"),
+  compose_file: z.string().describe("Path to Compose file in repo"),
+  reference_name: z.string().optional().describe("Git reference (branch/tag, e.g. refs/heads/main)"),
+  username: z.string().optional().describe("Git username"),
+  password: z.string().optional().describe("Git password/token"),
+  env: z.array(z.object({
+    name: z.string(),
+    value: z.string(),
+  })).optional().describe("Environment variables for the stack"),
+});
+
 export const UpdateStackSchema = z.object({
   stack_id: z.number().describe("Stack ID"),
   environment_id: z.number().describe("Portainer environment ID"),
