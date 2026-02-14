@@ -150,6 +150,34 @@ export const stackTools: Tool[] = [
     },
   },
   {
+    name: "create_stack_from_git",
+    description: "Deploy a new stack from a Git repository. Requires PORTAINER_WRITE_ENABLED=true.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        environment_id: { type: "number", description: "Portainer environment ID" },
+        name: { type: "string", description: "Stack name" },
+        repository_url: { type: "string", description: "Git repository URL" },
+        compose_file: { type: "string", description: "Path to Compose file in repo" },
+        reference_name: { type: "string", description: "Git reference (e.g. refs/heads/main)" },
+        username: { type: "string", description: "Git username" },
+        password: { type: "string", description: "Git password/token" },
+        env: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              value: { type: "string" },
+            },
+            required: ["name", "value"],
+          },
+        },
+      },
+      required: ["environment_id", "name", "repository_url", "compose_file"],
+    },
+  },
+  {
     name: "update_stack",
     description: "Update a deployed stack: change compose content, environment variables, or redeploy with latest images. Requires PORTAINER_WRITE_ENABLED=true.",
     inputSchema: {
