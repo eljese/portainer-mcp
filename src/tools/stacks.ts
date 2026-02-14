@@ -4,6 +4,7 @@ import {
   InspectStackSchema,
   StackActionSchema,
   CreateStackSchema,
+  CreateStackFromGitSchema,
   UpdateStackSchema,
   RedeployStackSchema,
   StackByNameSchema,
@@ -80,6 +81,29 @@ export async function createStack(
     parsed.environment_id,
     parsed.name,
     parsed.compose_content,
+    parsed.env
+  );
+  return formatResponse({
+    success: true,
+    id: stack.Id,
+    name: stack.Name,
+  });
+}
+
+export async function createStackFromGit(
+  client: PortainerClient,
+  args: unknown
+): Promise<ToolResponse> {
+  const parsed = CreateStackFromGitSchema.parse(args);
+  const stack = await client.createStackFromGit(
+    parsed.environment_id,
+    parsed.name,
+    parsed.repository_url,
+    parsed.compose_file,
+    parsed.reference_name,
+    !!parsed.password,
+    parsed.username,
+    parsed.password,
     parsed.env
   );
   return formatResponse({
